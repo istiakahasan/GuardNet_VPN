@@ -22,6 +22,7 @@ A minimal, modern **WireGuard VPN client for Android**. Import your own `.conf` 
 8. [Using the app](#8-using-the-app)
 9. [Troubleshooting](#9-troubleshooting)
 10. [Common pitfalls](#10-common-pitfalls)
+11. [Build the APK with GitHub Actions](#11-build-the-apk-with-github-actions)
 
 ---
 
@@ -248,6 +249,8 @@ VPN_Project/
 │       └── res/
 │           ├── drawable/ic_launcher.xml
 │           └── values/{strings,themes}.xml
+├── .github/workflows/
+│   └── build-apk.yml               CI: builds and signs the APK on GitHub
 ├── gradle/wrapper/                 Gradle wrapper (pins Gradle 8.7)
 ├── build.gradle.kts                Root build: plugin versions
 ├── settings.gradle.kts             Repositories and module list
@@ -483,3 +486,101 @@ Message reference:
 - **Wrong JDK:** the build needs JDK 17. Newer JDKs can break the Android Gradle Plugin.
 - **Lost keystore:** you can never update the installed app; you'd have to uninstall and reinstall.
 - **Committing secrets:** never commit `keystore.properties`, `*.jks` or any `.conf`. They are already in `.gitignore`.
+
+---
+
+## 11. Build the APK with GitHub Actions
+
+The workflow `.github/workflows/build-apk.yml` builds the APK on GitHub's servers, so you don't need Android tooling on your PC. It runs automatically on every push to `main`, on pull requests, on tags starting with `v`, and on demand.
+
+```mermaid
+flowchart LR
+    A["Push code or tag"] --> B["GitHub Actions runner"]
+    B --> C["Set up JDK 17 and Gradle"]
+    C --> D["Restore keystore from Secrets"]
+    D --> E["gradlew assembleRelease"]
+    E --> F["Signed APK"]
+    F --> G["Artifact download"]
+    F --> H["GitHub Release, on v* tags"]
+```
+
+### Step 1: Put the project on GitHub
+
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/<your-user>/<your-repo>.git
+git push -u origin main
+```
+
+Before pushing, run `git status` and confirm that `keystore.properties`, `local.properties` and any `.jks` or `.conf` file are **not** listed. `.gitignore` excludes them. Use a **private** repository if you can.
+
+### Step 2: Add your signing secrets
+
+Without secrets the workflow still works, but it builds a **debug** APK. To get a properly signed **release** APK, add four secrets.
+
+1. Convert your keystore to Base64.
+
+   **Windows (PowerShell)**
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\release.jks")) | Set-Clipboard
+   ```
+
+   **macOS / Linux**
+   ```bash
+   base64 -w 0 release.jks
+   ```
+
+2. On GitHub open **Settings > Secrets and variables > Actions > New repository secret** and create:
+
+   | Secret name | Value |
+   |---|---|
+   | `KEYSTORE_BASE64` | The Base64 text from step 1 |
+   | `KEYSTORE_PASSWORD` | Your keystore password |
+   | `KEY_ALIAS` | Your key alias (for example `vpnkey`) |
+   | `KEY_PASSWORD` | Your key password |
+
+The workflow decodes the keystore into a temporary file and passes the values to Gradle through the `WG_STORE_FILE`, `WG_STORE_PASSWORD`, `WG_KEY_ALIAS` and `WG_KEY_PASSWORD` environment variables. Secrets are masked in the logs and the keystore is deleted when the run ends.
+
+### Step 3: Run the workflow
+
+- **Automatically:** every push to `main` starts a build.
+- **Manually:** open the **Actions** tab, choose **Build APK**, click **Run workflow**, then **Run workflow** again.
+
+Wait for a green check mark (the first run takes about 5 to 10 minutes).
+
+### Step 4: Download the APK
+
+**From a workflow run (any build)**
+
+1. Open the **Actions** tab and click the latest run of **Build APK**.
+2. Scroll to **Artifacts** at the bottom of the page.
+3. Click **wg-client-apk** to download a ZIP, then unzip it to get `app-release.apk`.
+
+Artifacts are kept for 30 days.
+
+**From a Release (permanent link, recommended)**
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+When the run finishes, the APK appears under **Releases** on the right side of the repository page. Anyone with access can download it from there, and it does not expire.
+
+For updates, raise `versionCode` and `versionName` in `app/build.gradle.kts` before tagging, and keep using the **same keystore**.
+
+Then install it on your phone as described in [Step 5](#step-5-install-on-your-phone).
+
+### Troubleshooting CI
+
+| Problem | Fix |
+|---|---|
+| Workflow doesn't appear in Actions | The file must be at `.github/workflows/build-apk.yml` and pushed to GitHub |
+| `gradlew: Permission denied` | The workflow already runs `chmod +x gradlew`. Make sure `gradlew` and `gradle/wrapper/gradle-wrapper.jar` are committed |
+| Debug APK instead of release | One of the four secrets is missing or `KEYSTORE_BASE64` is empty |
+| `Keystore was tampered with, or password was incorrect` | `KEYSTORE_PASSWORD` or `KEY_PASSWORD` is wrong |
+| Release not created | The tag must start with `v`, and the signing secrets must be set |
+| Pull requests from forks have no secrets | GitHub hides secrets from forks, so those builds are debug builds |

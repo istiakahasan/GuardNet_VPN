@@ -1,0 +1,68 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]          # pushing a tag like v1.0.0 also creates a GitHub Release
+  pull_request:
+  workflow_dispatch:      # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write         # needed only to attach the APK to a Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HAS_SIGNING: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # Rebuilds the keystore file from the GitHub Secret. It exists only for this run.
+      - name: Restore signing keystore
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "WG_STORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        if: env.HAS_SIGNING == 'true'
+        env:
+          WG_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          WG_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          WG_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      # Fallback when no signing secrets are set: a debug APK is still installable.
+      - name: Build debug APK (no signing secrets configured)
+        if: env.HAS_SIGNING != 'true'
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-client-apk
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_SIGNING == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
