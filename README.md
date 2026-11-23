@@ -123,13 +123,16 @@ flowchart TB
 ### State model
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Disconnected
-    Disconnected --> Connecting: tap Connect (permission granted)
-    Connecting --> Connected: tunnel is UP
-    Connecting --> Disconnected: error (message shown)
-    Connected --> Disconnected: tap Disconnect and confirm
-    Connected --> Disconnected: system or another VPN drops the tunnel
+flowchart LR
+    D["Disconnected<br>grey button"]
+    C["Connecting<br>amber button and spinner"]
+    U["Connected<br>green button, timer, stats"]
+
+    D -->|"tap Connect, permission granted"| C
+    C -->|"tunnel is up"| U
+    C -->|"error, message shown"| D
+    U -->|"tap Disconnect and confirm"| D
+    U -->|"system drops the tunnel"| D
 ```
 
 `ConnectionState` is a sealed interface: `Disconnected`, `Connecting`, `Connected(since)`. The button color, icon label, status text, timer and stats are all derived from it.
@@ -142,24 +145,28 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    A([Open app]) --> B{Config saved?}
-    B -- No --> C[Onboarding screen]
-    C --> D[Import Config file<br/>or Paste Config]
-    D --> E{Valid WireGuard config?}
-    E -- No --> F[Snackbar: config isn't valid] --> C
-    E -- Yes --> G[Encrypt and save]
-    B -- Yes --> H
-    G --> H[Main screen: Disconnected]
-    H --> I[Tap Connect]
-    I --> J{VPN permission granted?}
-    J -- No --> K[Snackbar: VPN permission denied] --> H
-    J -- Yes --> L[Connecting: amber, spinner,<br/>button disabled]
-    L --> M{Tunnel up?}
-    M -- No --> N[Snackbar: couldn't connect] --> H
-    M -- Yes --> O[Connected: green,<br/>timer and stats running]
-    O --> P[Tap Disconnect] --> Q{Confirm?}
-    Q -- Stay connected --> O
-    Q -- Disconnect --> H
+    A(["Open app"]) --> B{"Config saved?"}
+    B -->|"No"| C["Onboarding screen"]
+    C --> D["Import Config file or Paste Config"]
+    D --> E{"Valid WireGuard config?"}
+    E -->|"No"| F["Message: config is not valid"]
+    F --> C
+    E -->|"Yes"| G["Encrypt and save"]
+    B -->|"Yes"| H
+    G --> H["Main screen: Disconnected"]
+    H --> I["Tap Connect"]
+    I --> J{"VPN permission granted?"}
+    J -->|"No"| K["Message: VPN permission denied"]
+    K --> H
+    J -->|"Yes"| L["Connecting: amber, spinner, button disabled"]
+    L --> M{"Tunnel up?"}
+    M -->|"No"| N["Message: could not connect"]
+    N --> H
+    M -->|"Yes"| O["Connected: green, timer and stats running"]
+    O --> P["Tap Disconnect"]
+    P --> Q{"Confirm?"}
+    Q -->|"Stay connected"| O
+    Q -->|"Disconnect"| H
 ```
 
 ### 4.2 Connect sequence
